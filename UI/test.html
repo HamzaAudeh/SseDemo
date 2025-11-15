@@ -1,0 +1,22 @@
+﻿<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>SSE</title>
+</head>
+<body>
+    <div>This is a small SSE Viewer</div>
+
+    <div class="col-md-12">
+        <div class="col-md-6" id="summary1"></div>
+        <div class="col-md-6" id="summary2"></div>
+    </div>
+    <script>
+        const es1 = new EventSource("https://localhost:7023/summary");
+        es1.onmessage = e => document.getElementById("summary1").innerHTML += e.data + "<br>";
+
+        const es2 = new EventSource("https://localhost:7023/typedSummary");
+        es2.onmessage = e => document.getElementById("summary2").innerHTML += e.data + "<br>";
+    </script>
+</body>
+</html>
