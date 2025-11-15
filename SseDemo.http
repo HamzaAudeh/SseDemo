@@ -4,3 +4,8 @@ GET {{SseDemo_HostAddress}}/weatherforecast/
 Accept: application/json
 
 ###
+
+GET {{SseDemo_HostAddress}}/summary/
+Accept: text/event-stream
+
+###
