@@ -33,30 +33,45 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-
-app.MapGet("/summary", async (HttpContext context, EventService service) =>
+app.MapGet("/stocks", async (HttpContext context, EventService service) =>
 {
     context.Response.Headers.Add("Content-Type", "text/event-stream");
-
-    await foreach (var message in service.GetMessages(context.RequestAborted))
+    int? lastId = null;
+    if (context.Request.Headers.TryGetValue("Last-Event-ID", out var val))
     {
-        await context.Response.WriteAsync(message);
-        await context.Response.Body.FlushAsync();
+        lastId = int.TryParse(val, out int parsed) ? parsed : null;
     }
-})
-.WithName("GetSummary");
 
-app.MapGet("/typedSummary", async (HttpContext context, EventService service) =>
-{
-    context.Response.Headers.Add("Content-Type", "text/event-stream");
-
-    await foreach (var typedMessage in service.GetTypedMessages(context.RequestAborted))
+    await foreach (var typedMessage in service.GetStockPrice(lastId, context.RequestAborted))
     {
         var json = JsonSerializer.Serialize(typedMessage);
-        await context.Response.WriteAsync($"data: {json} at {DateTime.Now}\n\n");
+        await context.Response.WriteAsync($"id: {typedMessage.Id}\n");
+        await context.Response.WriteAsync($"data: {json}\n\n");
         await context.Response.Body.FlushAsync();
     }
 })
-.WithName("GetTypedSummary");
+.WithName("GetStocks");
+
+app.MapGet("/stocks/specificEvent", async (HttpContext context, EventService service) =>
+{
+    context.Response.Headers.Add("Content-Type", "text/event-stream");
+    int? lastId = null;
+    if (context.Request.Headers.TryGetValue("Last-Event-ID", out var val))
+    {
+        lastId = int.TryParse(val, out int parsed) ? parsed : null;
+        //you can use this to resume data sending from a specific place
+    }
+
+    await foreach (var typedMessage in service.GetStockPrice(lastId, context.RequestAborted))
+    {
+        var json = JsonSerializer.Serialize(typedMessage);
+        await context.Response.WriteAsync($"id: {typedMessage.Id}\n");
+        await context.Response.WriteAsync($"event: PriceChanged\n");
+        await context.Response.WriteAsync($"data: {json}\n\n");
+        await context.Response.Body.FlushAsync();
+    }
+})
+.WithName("GetStocksWithSpecificEvent");
+
 
 app.Run();

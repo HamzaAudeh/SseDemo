@@ -2,21 +2,267 @@
 <html>
 <head>
     <meta charset="utf-8" />
-    <title>SSE</title>
+    <title>SSE — All events + PriceChanged</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+
+        .top-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 12px;
+        }
+
+        #toggleBtn {
+            padding: 8px 14px;
+            cursor: pointer;
+            border: 1px solid #888;
+            background: #f3f3f3;
+            border-radius: 6px;
+        }
+
+        .container {
+            display: flex;
+            gap: 20px;
+        }
+
+        .panel {
+            flex: 1 1 0;
+        }
+
+        h2 {
+            margin: 0 0 8px 0;
+            font-size: 16px;
+            text-align: center;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            box-shadow: 0 0 0 1px rgba(0,0,0,0.06);
+        }
+
+        th, td {
+            border: 1px solid #bbb;
+            padding: 6px 8px;
+            text-align: left;
+            font-size: 13px;
+        }
+
+        th {
+            background: #efefef;
+            font-weight: 600;
+        }
+
+        tbody tr:nth-child(odd) td {
+            background: #fff;
+        }
+
+        tbody tr:nth-child(even) td {
+            background: #fbfbfb;
+        }
+
+        /* keep newest on top visually */
+        tbody {
+            display: table-row-group;
+        }
+    </style>
 </head>
 <body>
-    <div>This is a small SSE Viewer</div>
-
-    <div class="col-md-12">
-        <div class="col-md-6" id="summary1"></div>
-        <div class="col-md-6" id="summary2"></div>
+    <div class="top-row">
+        <h1 style="margin:0">SSE Demo </h1>
+        <button id="toggleBtn">Stop Connection</button>
     </div>
-    <script>
-        const es1 = new EventSource("https://localhost:7023/summary");
-        es1.onmessage = e => document.getElementById("summary1").innerHTML += e.data + "<br>";
 
-        const es2 = new EventSource("https://localhost:7023/typedSummary");
-        es2.onmessage = e => document.getElementById("summary2").innerHTML += e.data + "<br>";
+    <div>
+        The last event id in a manualt connection stop/start -as the button behaves- can't be passed in header
+        because once the connection is opened, brwosers don't allow modifications for security reasons.
+        Browser will indeed send the header only in actual reconnection behaviour.
+        If you want to test this, you can pass last-event-id in query params and handle it in the backend.
+    </div>
+    <div class="container">
+        <!-- Table 1: All events -->
+        <div class="panel">
+            <h2>All Stock Events</h2>
+            <p>This table showcases how to listen to all events sent from server</p>
+            <table id="allTable" aria-label="All events">
+                <thead>
+                    <tr>
+                        <th style="width:8%;">ID</th>
+                        <th style="width:24%;">Symbol</th>
+                        <th style="width:18%;">Price</th>
+                        <th style="width:50%;">Timestamp</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+
+        <!-- Table 2: PriceChanged events only -->
+        <div class="panel">
+            <h2>PriceChanged Events</h2>
+            <p>This table showcases how to listen to a specific event -PriceChanged- sent from server</p>
+            <table id="priceTable" aria-label="PriceChanged events">
+                <thead>
+                    <tr>
+                        <th style="width:8%;">ID</th>
+                        <th style="width:24%;">Symbol</th>
+                        <th style="width:18%;">Price</th>
+                        <th style="width:50%;">Timestamp</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        /*
+          Behavior:
+           - Two EventSource connections point to some endpoints
+           - The server should read lastEventId query param and resume/skip accordingly.
+           - All events populate the left table via source.onmessage
+           - Events named "PriceChanged" populate the right table via addEventListener
+        */
+
+        const ENDPOINT_FOR_ALL_EVENTS = "https://localhost:7023/stocks";
+        const ENDPOINT_FOR_SPECIFC_EVENT = "https://localhost:7023/stocks/specificEvent";
+
+        // localStorage keys
+        const KEY_ALL = "sse_last_id_all";
+        const KEY_PRICE = "sse_last_id_price";
+
+        // references
+        let sourceAll = null;
+        let sourcePrice = null;
+        let isRunning = true;
+
+        // append row helper (newest on top)
+        function appendRowTo(tableId, evtObj) {
+            const tbody = document.getElementById(tableId).querySelector("tbody");
+            const tr = document.createElement("tr");
+
+            // guard missing fields
+            const id = evtObj?.Id ?? evtObj?.id ?? "";
+            const symbol = evtObj?.Symbol ?? evtObj?.symbol ?? "";
+            const price = evtObj?.Price ?? evtObj?.price ?? "";
+            const timestamp = evtObj?.Timestamp ?? evtObj?.timestamp ?? "";
+
+            tr.innerHTML = `
+                <td>${id}</td>
+                <td>${symbol}</td>
+                <td>${price}</td>
+                <td>${timestamp}</td>
+            `;
+            // prepend newest row
+            if (tbody.firstChild) tbody.insertBefore(tr, tbody.firstChild);
+            else tbody.appendChild(tr);
+        }
+
+        // safe JSON parse
+        function safeParse(data) {
+            try {
+                return JSON.parse(data);
+            } catch (err) {
+                console.warn("Failed to parse SSE data as JSON:", data, err);
+                return null;
+            }
+        }
+
+
+        function startSseConnections() {
+            // Read last IDs from localStorage
+            const lastAll = localStorage.getItem(KEY_ALL) || "";
+            const lastPrice = localStorage.getItem(KEY_PRICE) || "";
+
+            // ---- Connection #1: All events ----
+            sourceAll = new EventSource(ENDPOINT_FOR_ALL_EVENTS, {
+                headers: { "Last-Event-ID": lastAll }
+            });
+
+            sourceAll.onopen = () => {
+                console.log("SSE (all) opened ->", ENDPOINT_FOR_ALL_EVENTS);
+            };
+
+            sourceAll.onerror = (err) => {
+                console.warn("SSE (all) error", err);
+                // don't attempt manual reconnect here — the toggle controls it
+            };
+
+            sourceAll.onmessage = (e) => {
+                // e.data should be JSON string per the server contract
+                const payload = safeParse(e.data);
+                if (payload) {
+                    // save last id (browser also knows it on automatic reconnects)
+                    if (e.lastEventId) localStorage.setItem(KEY_ALL, e.lastEventId);
+                    appendRowTo("allTable", payload);
+                }
+            };
+
+            // ---- Connection #2: PriceChanged events only (same endpoint) ----
+            sourcePrice = new EventSource(ENDPOINT_FOR_SPECIFC_EVENT, {
+                headers: { "Last-Event-ID": lastPrice }
+            });
+
+            sourcePrice.onopen = () => {
+                console.log("SSE (price) opened ->", ENDPOINT_FOR_SPECIFC_EVENT);
+            };
+
+            sourcePrice.onerror = (err) => {
+                console.warn("SSE (price) error", err);
+            };
+
+            // Listen for named event "PriceChanged" emitted from server as:
+            // event: PriceChanged
+            // data: { ... }
+            sourcePrice.addEventListener("PriceChanged", (e) => {
+                const payload = safeParse(e.data);
+                if (payload) {
+                    if (e.lastEventId) localStorage.setItem(KEY_PRICE, e.lastEventId);
+                    appendRowTo("priceTable", payload);
+                }
+            });
+
+            // Optional: also handle generic messages on price connection (if you want)
+            sourcePrice.onmessage = (e) => {
+                // If server emits non-named messages and you still want to capture them you can
+                // const payload = safeParse(e.data);
+                // if (payload) { /* ... */ }
+            };
+        }
+
+        function stopSseConnections() {
+            if (sourceAll) {
+                sourceAll.close();
+                sourceAll = null;
+            }
+            if (sourcePrice) {
+                sourcePrice.close();
+                sourcePrice = null;
+            }
+        }
+
+        // Toggle button wiring
+        const toggleBtn = document.getElementById("toggleBtn");
+        toggleBtn.addEventListener("click", () => {
+            if (isRunning) {
+                stopSseConnections();
+                toggleBtn.textContent = "Start Connection";
+                isRunning = false;
+            } else {
+                startSseConnections();
+                toggleBtn.textContent = "Stop Connection";
+                isRunning = true;
+            }
+        });
+
+        // Start connections immediately on load
+        startSseConnections();
     </script>
+
 </body>
 </html>
